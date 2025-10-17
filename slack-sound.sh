@@ -4,12 +4,9 @@
 # Replaces default Slack notification sounds with custom audio files
 # Requires macOS with afplay and log stream utilities
 
-set -e
-
 # Default values
 SOUND_FILE="${1:-$HOME/Downloads/icq.mp3}"
 DEBOUNCE_SECONDS="${2:-2}"
-LAST_PLAY=0
 
 # Function to display usage
 show_usage() {
@@ -52,18 +49,25 @@ echo "Debounce: ${DEBOUNCE_SECONDS}s"
 echo "Press Ctrl+C to stop"
 echo ""
 
-# Watch for Slack notifications and play custom sound
-log stream --predicate 'eventMessage CONTAINS "Playing notification sound"' --level info | \
-while IFS= read -r line; do
-    if echo "$line" | grep -q "com.tinyspeck.slackmacgap"; then
-        CURRENT_TIME=$(date +%s)
-        TIME_DIFF=$((CURRENT_TIME - LAST_PLAY))
+# Create temporary file to track last play time
+TEMP_FILE=$(mktemp)
+# Initialize with current time to prevent playing on startup
+echo "$(date +%s)" > "$TEMP_FILE"
 
-        # Only play if debounce period has passed
-        if [ $TIME_DIFF -gt $DEBOUNCE_SECONDS ]; then
-            echo "$(date '+%Y-%m-%d %H:%M:%S') - Slack notification detected, playing sound..."
-            afplay "$SOUND_FILE" &
-            LAST_PLAY=$CURRENT_TIME
-        fi
+# Clean up temp file on exit
+trap "rm -f $TEMP_FILE" EXIT
+
+# Watch for Slack notifications and play custom sound
+log stream --predicate 'subsystem == "com.apple.unc" AND eventMessage CONTAINS "Delivering" AND eventMessage CONTAINS "com.tinyspeck.slackmacgap"' --level info | \
+while IFS= read -r line; do
+    CURRENT_TIME=$(date +%s)
+    LAST_PLAY=$(cat "$TEMP_FILE")
+    TIME_DIFF=$((CURRENT_TIME - LAST_PLAY))
+
+    # Only play if debounce period has passed
+    if [ $TIME_DIFF -gt $DEBOUNCE_SECONDS ]; then
+        echo "$(date '+%Y-%m-%d %H:%M:%S') - Slack notification detected, playing sound..."
+        afplay "$SOUND_FILE" &
+        echo "$CURRENT_TIME" > "$TEMP_FILE"
     fi
 done
